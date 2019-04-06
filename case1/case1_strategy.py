@@ -9,6 +9,8 @@ from protos.order_book_pb2 import Order
 from protos.service_pb2 import PlaceOrderResponse
 from protos.exchange_pb2 import MarketUpdate
 
+current_position = np.zeros([6,1])
+
 def prc_deviation_calc(prc_vec, expected_prc_vec = np.array([100.4478, 100.9738, 101.1336, 101.1543, 101.2378, 101.6016])):
         # Pick out mid_market_price vector
         prc_vec_mid = prc_vec[:,2]
@@ -75,14 +77,16 @@ class ExampleMarketMaker(BaseExchangeServerClient):
     
     def _make_order(self, asset_code, quantity, base_price, spread):
         return Order(asset_code = asset_code, quantity=quantity,
-                     order_type = Order.ORDER_MKT,
-                     #price = base_price-spread/2 if bid else base_price+spread/2,
+                     order_type = Order.ORDER_LMT,
+                     price = base_price-spread/2 if quantity>0 else base_price+spread/2,
                      competitor_identifier = self._comp_id)
                      
     def _cancel_order(self, order_id):
         return CancelOrderRequest(order_id = order_id) 
     
     def handle_exchange_update(self, exchange_update_response):
+        global current_position
+        
         """# method for cancelling existing orders
         cancel_resp = self.cancel_order(self._cancel_order(order_id))
         if type(cancel_resp) != CancelOrderResponse:
@@ -98,18 +102,29 @@ class ExampleMarketMaker(BaseExchangeServerClient):
         
         # Implement pricing strategy    
         prc_abnormality_arr = prc_deviation_calc(current_prices)
-        weight_vec = alloc_calc(prc_abnormality_arr)
-        weight_int = np.floor(10*weight_vec)
+        weight_vec = 20*alloc_calc(prc_abnormality_arr)
+        weight_int = weight_vec.astype(int)
         
         # Check for filled quantities
-        for i,update in enumerate(exchange_update_response.fills):
-            print(update.order.asset_code,update.filled_quantity)
+        filled_order_quantity_vec = np.zeros([6,2])
+        filled_order_asset_vec = np.chararray([6,1])
+        for i, update in enumerate(exchange_update_response.fills):
+            filled_order_quantity_vec[i,:] = np.array([update.order.quantity,update.order.remaining_quantity])
+            filled_order_asset_vec[i,0] = update.order.asset_code
+        print("Fills:")
+        print(filled_order_asset_vec)
+        print(filled_order_quantity_vec)
+        
+        # Calculate current position
+        current_position[:,0] = current_position[:,0] + filled_order_quantity_vec[:,0] - filled_order_quantity_vec[:,1]
+        print("Current Position:\n",current_position)
         
         # Ordering Logic
         for i, asset_code in enumerate(["K", "M", "N", "Q", "U", "V"]):
-            quantity = weight_int[0,i]
-            base_price = current_prices[i,2]
-            spread = 6
+            quantity = weight_int[0,i] - current_position[i,0]
+            quantity = quantity.astype(int)
+            base_price = round(current_prices[i,2],2)
+            spread = 4
         
             order_resp = self.place_order(self._make_order(asset_code, quantity,
                 base_price, spread))
@@ -122,6 +137,7 @@ class ExampleMarketMaker(BaseExchangeServerClient):
                 
         # Track PnL
         print("PnL:",exchange_update_response.competitor_metadata.pnl)
+        print("\n\n")
 
 
            
