@@ -46,7 +46,7 @@ class NDMarketMaker(BaseExchangeServerClient):
 
 
     # computes time to expiration
-    def _get_time_to_exp():
+    def _get_time_to_exp(self):
         return (3-((datetime.datetime.now()-self.START_TIME).total_seconds()*1./900.))*(1./12.)
 
 
@@ -74,14 +74,14 @@ class NDMarketMaker(BaseExchangeServerClient):
 
 
     # gets meaured price, designed so we can easily adjust it
-    def get_measured_price(mid_price, imbalance, best_ask, best_bid, **kwargs):
+    def get_measured_price(self, mid_price, imbalance, best_ask, best_bid, **kwargs):
         method = kwargs.get(method, "weighted")
         if method == "weighted":
             return weighted_price(mid_price, imbalance, best_ask, best_bid)
 
 
     # Sends orders to exchange
-    def send_order(asset_code, qty, base_price, spread):
+    def send_order(self, asset_code, qty, base_price, spread):
         ask_resp = self.place_order(self._make_order(asset_code, qty, base_price, spread,  False))
         bid_resp = self.place_order(self._make_order(asset_code, qty, base_price, spread,  True))
 
@@ -99,7 +99,7 @@ class NDMarketMaker(BaseExchangeServerClient):
 
     # Generates then sends orders
     MIN_SPREAD = 0.02
-    def generate_limit_order(asset_code, measured_price, volatility, best_ask, best_bid, **kwargs):
+    def generate_limit_order(self, asset_code, measured_price, volatility, best_ask, best_bid, **kwargs):
         min_spread = kwargs("min_spread", MIN_SPREAD)
         bs_price = bs.black_scholes(asset_code[0].lower(), self.underlying_price, asset_codes[asset_code]["strike"], self._get_time_to_exp, 0, volatility)
         spread, base_price = _get_spread(bs_price, measured_price, best_ask, best_bid)
@@ -112,7 +112,7 @@ class NDMarketMaker(BaseExchangeServerClient):
 
 
     # TODO: Handle fills/hedge
-    def HANDLE_FILLS():
+    def HANDLE_FILLS(self):
         pass
 
 
