@@ -1,4 +1,8 @@
-name: put_your_team_name_here
+name: Notre Dame
 dependencies:
   - numpy
   - scipy
+  - torch
+  - numpy
+  - pickle
+  - cvxopt
