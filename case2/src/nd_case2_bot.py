@@ -11,20 +11,6 @@ import py_vollib.black_scholes.greeks.numerical as bsgn
 import multiprocessing as mp
 import math
 
-def __init_asset_codes():
-    asset_codes = {}
-    codes = ["C98PHX", "P98PHX",
-             "C99PHX", "P99PHX", 
-             "C100PHX", "P100PHX", 
-             "C101PHX", "P101PHX", 
-             "C102PHX", "P102PHX", ]
-    for code in codes:
-        asset_codes[code] = {}
-        asset_codes[code]["strike"] = int(code[1:-3])
-        asset_codes[code]["vol"] = 8.*abs(math.log(100./asset_codes[code]["strike"]))
-        asset_codes[code]["price"] = bs.black_scholes(code[0].lower(), 100, asset_codes[code]["strike"],
-                                                      0.25, 0, asset_codes[code]["vol"])
-    return asset_codes
 
 
 # gets spread and base_price using primitive adjustment method
@@ -57,12 +43,28 @@ def weighted_price(mid_price, imbalance, best_ask, best_bid):
 class NDMarketMaker(BaseExchangeServerClient):
 
 
+    def __init_asset_codes(self):
+        asset_codes = {}
+        codes = ["C98PHX", "P98PHX",
+                 "C99PHX", "P99PHX", 
+                 "C100PHX", "P100PHX", 
+                 "C101PHX", "P101PHX", 
+                 "C102PHX", "P102PHX", ]
+        for code in codes:
+            asset_codes[code] = {}
+            asset_codes[code]["strike"] = int(code[1:-3])
+            asset_codes[code]["vol"] = 8.*abs(math.log(100./asset_codes[code]["strike"]))
+            asset_codes[code]["price"] = bs.black_scholes(code[0].lower(), 100, asset_codes[code]["strike"],
+                                                          0.25, 0, asset_codes[code]["vol"])
+        return asset_codes
+
+
     def __init__(self, *args, **kwargs):
         BaseExchangeServerClient.__init__(self, *args, **kwargs)
 
         self.START_TIME = datetime.datetime.now()
         self._orderids = set([])
-        self.asset_codes = __init_asset_codes()
+        self.asset_codes = self.__init_asset_codes()
         self.underlying_price = 100
 
 
@@ -147,7 +149,7 @@ class NDMarketMaker(BaseExchangeServerClient):
         processes = []
         for update in exchange_update_response.market_updates:
             code = update.asset.asset_code
-            imbalance = update.bids[0].quantity / (update.bids[0].quantity + update.asks[0].quantity)
+            imbalance = update.bids[0].size / (update.bids[0].size + update.asks[0].size)
             measured_price = self.get_measured_price(update.mid_market_price, imbalance, update.ask, update.bid)
             p = mp.Process(target=self.generate_limit_order, args=(code, measured_price, self.asset_codes[code]["vol"], update.ask, update.bid, 0.02))
             p.start()
