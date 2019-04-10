@@ -18,6 +18,7 @@ def _get_spread_scaled(bsp, wmp, ask, bid):
     x3 = ask - wmp
     x2 = wmp - bsp
     x1 = bsp - bid
+    # print(bid, ask)
     ask = ask - (x2/(bid-ask))*x3
     bid = bid - (x1/(bid-ask))*x1
     return (ask - bid, (ask + bid)/2)
@@ -30,8 +31,8 @@ def get_qty(*args, method="discrep"):
     '''
     if method == "discrep":
         # factors to determine scaling of qty with spread and price discrepency
-        SPREAD_FACTOR = 1
-        DISCREP_FACTOR = 1
+        SPREAD_FACTOR = 50
+        DISCREP_FACTOR = 0
         return args[0]*SPREAD_FACTOR + args[1]*DISCREP_FACTOR
 
 
@@ -45,12 +46,7 @@ class NDMarketMaker(BaseExchangeServerClient):
 
     def __init_asset_codes(self):
         asset_codes = {}
-        codes = ["C98PHX", "P98PHX",
-                 "C99PHX", "P99PHX", 
-                 "C100PHX", "P100PHX", 
-                 "C101PHX", "P101PHX", 
-                 "C102PHX", "P102PHX", ]
-        for code in codes:
+        for code in self.codes:
             asset_codes[code] = {}
             asset_codes[code]["strike"] = int(code[1:-3])
             asset_codes[code]["vol"] = 8.*abs(math.log(100./asset_codes[code]["strike"]))
@@ -58,21 +54,54 @@ class NDMarketMaker(BaseExchangeServerClient):
                                                           0.25, 0, asset_codes[code]["vol"])
         return asset_codes
 
+    
+    def __init_inventory(self):
+        inventory = {}
+        for code in self.codes:
+            inventory[code] = 0
+        return inventory
+
 
     def __init__(self, *args, **kwargs):
+        self.START_TIME = datetime.datetime.now()
         BaseExchangeServerClient.__init__(self, *args, **kwargs)
 
-        self.START_TIME = datetime.datetime.now()
+        self.codes = ["C98PHX", "P98PHX",
+                 "C99PHX", "P99PHX", 
+                 "C100PHX", "P100PHX", 
+                 "C101PHX", "P101PHX", 
+                 "C102PHX", "P102PHX",]
         self._orderids = set([])
         self.asset_codes = self.__init_asset_codes()
+        self.underlying_code = "IDX#PHX"
         self.underlying_price = 100
+        self.inventory = self.__init_inventory()
+
+
+    # more complicated than we thought
+    # as of now, assumes assets are uncorrelated
+    def _get_vega(self, code):
+        return bsgn.vega(code['0'].lower(), self.underlying_price, self.asset_codes[code]["strike"], self.get_time_to_exp(),0,self.asset_codes[code]["vol"])
+
+    def _get_position_vega(self):
+        vega = 0.
+        net_position = sum(list(self.inventory.values()))
+        for code in self.codes:
+            vega += (self.inventory[code]/net_position)*self._get_vega(code)
+        return vega 
 
 
 
     def _make_order(self, asset_code, quantity, base_price, spread, bid=True):
-        return Order(asset_code = asset_code, quantity=quantity if bid else -1*quantity,
+        return Order(asset_code = asset_code, quantity= int(quantity if bid else -1*quantity),
                      order_type = Order.ORDER_LMT,
                      price = base_price-spread/2 if bid else base_price+spread/2,
+                     competitor_identifier = self._comp_id)
+
+
+    def _make_mkt_order(self, asset_code, quantity):
+        return Order(asset_code = asset_code, quantity=int(quantity),
+                     order_type = Order.ORDER_MKT,
                      competitor_identifier = self._comp_id)
 
 
@@ -80,6 +109,30 @@ class NDMarketMaker(BaseExchangeServerClient):
     def get_time_to_exp(self):
         return (3-((datetime.datetime.now()-self.START_TIME).total_seconds()*1./900.))*(1./12.)
 
+
+    def hedge_delta(self, fill):
+        code = fill.order.asset_code
+        qty = fill.fill_quantity
+        delta = bsgn.delta(code[0].lower(), self.underlying_price, self.asset_codes[code]["strike"], self.get_time_to_exp(),0, self.asset_codes["vol"])
+        order_resp = self._make_mkt_order(self.underlying_code, qty*delta if code[0].lower() == 'p' else -qty*delta) # buy(sell) delta underlying for each option exchanged
+        if type(order_resp) != PlaceOrderResponse:
+            print(3, order_resp)
+        else:
+            self._orderids.add(order_resp.order_id)
+
+
+    # Review
+    def hedge_vega(self, fill):
+        code = fill.order.asset_code
+        qty = fill.fill_quantity
+        vegaP = self._get_position_vega()
+        vega = self._get_vega(code)
+        hedge_qty = abs(qty)*(-vega)/vegaP
+        order_resp = self._make_mkt_order(code, hedge_qty) # buy(sell) -vega/vegaT underlying for each option exchanged
+        if type(order_resp) != PlaceOrderResponse:
+            print(4, order_resp)
+        else:
+            self._orderids.add(order_resp.order_id)
 
 
     # In development
@@ -104,17 +157,20 @@ class NDMarketMaker(BaseExchangeServerClient):
 
     # Sends orders to exchange
     def send_order(self, asset_code, qty, base_price, spread, kind="lmt"):
+        qty = int(qty)
         if kind == "lmt":
+            print(qty)
+            base_price = round(base_price, 2)
             ask_resp = self.place_order(self._make_order(asset_code, qty, base_price, spread,  False))
             bid_resp = self.place_order(self._make_order(asset_code, qty, base_price, spread,  True))
     
             if type(ask_resp) != PlaceOrderResponse:
-                print(ask_resp)
+                print(1, ask_resp)
             else:
                 self._orderids.add(ask_resp.order_id)
             
             if type(bid_resp) != PlaceOrderResponse:
-                print(bid_resp)
+                print(2, bid_resp)
             else:
                 self._orderids.add(bid_resp.order_id)
 
@@ -129,11 +185,12 @@ class NDMarketMaker(BaseExchangeServerClient):
         if spread < min_spread: return
 
         self.send_order(asset_code, get_qty(spread, abs(base_price - bs_price)), base_price, spread)
-        self.asset_codes[asset_code]["vol"] = bs.black_scholes.implied_volatility.implied_volatility(measured_price, self.asset_codes[asset_code]["strike"],
+        self.asset_codes[asset_code]["vol"] = bs.implied_volatility.implied_volatility(measured_price, self.underlying_price, self.asset_codes[asset_code]["strike"],
                                                                                                     self.get_time_to_exp(), 0, asset_code[0].lower())
 
 
     # TODO: Handle fills/hedge
+    # deprecated
     def HANDLE_FILLS(self):
         pass
 
@@ -146,15 +203,48 @@ class NDMarketMaker(BaseExchangeServerClient):
             --> (not robust, may not work, haven't experimented with
                 memory sharing/dict access)
         '''
-        processes = []
+        #
+        # TODO: Figure out how to get price of the underlying
+        #
+        # print(len(exchange_update_response.market_updates))
+        # for update in exchange_update_response.market_updates:
+        #     print(update.asset.asset_code, ':', len(update.bids))
+        print(exchange_update_response.competitor_metadata)
+        updates = {}
         for update in exchange_update_response.market_updates:
-            code = update.asset.asset_code
-            imbalance = update.bids[0].size / (update.bids[0].size + update.asks[0].size)
-            measured_price = self.get_measured_price(update.mid_market_price, imbalance, update.ask, update.bid)
-            p = mp.Process(target=self.generate_limit_order, args=(code, measured_price, self.asset_codes[code]["vol"], update.ask, update.bid, 0.02))
-            p.start()
-        for p in processes:
-            p.join()
+            updates[update.asset.asset_code] = update
+            # print(update.asset.asset_code)
+        
+        # Do we want to process fills before or after processing market move?
+        if exchange_update_response.fills:
+            for fill in exchange_update_response.fills:
+                if fill.order.asset_code not in self.codes: continue
+                self.inventory[fill.order.asset_code] += fill.fill_quantity
+                self.hedge_delta(fill)
+                self.hedge_vega(fill)
+
+        # processes = []
+        for code in list(self.asset_codes.keys()):
+            update = updates.get(code, 0)
+
+            if not update:
+                measured_price = self.asset_codes[code]["price"]
+                init_spread = 0.5
+                self.generate_limit_order(code, measured_price, self.asset_codes[code]["vol"], measured_price+init_spread/2, measured_price-init_spread/2, 0.02)
+                # p = mp.Process(target=self.generate_limit_order, args=(code, measured_price, self.asset_codes[code]["vol"], measured_price+init_spread/2, measured_price-init_spread/2, 0.02))
+            else:
+                imbalance = update.bids[0].size / (update.bids[0].size + update.asks[0].size)
+                measured_price = self.get_measured_price(update.mid_market_price, imbalance, update.asks[0].price, update.bids[0].price)
+                self.generate_limit_order(code, measured_price, self.asset_codes[code]["vol"], update.asks[0].price, update.bids[0].price, 0.02)
+
+        #   TODO: multiprocessing
+        #        p = mp.Process(target=self.generate_limit_order, args=(code, measured_price, self.asset_codes[code]["vol"], update.ask, update.bid, 0.02))
+
+        #    processes.append(p)
+        #    p.start()
+
+        #for p in processes:
+        #    p.join()
 
 
 
