@@ -6,10 +6,13 @@ from sympy import *
 
 from client.exchange_service.client import BaseExchangeServerClient
 from protos.order_book_pb2 import Order
-from protos.service_pb2 import PlaceOrderResponse
+from protos.service_pb2 import PlaceOrderResponse, CancelOrderResponse
 from protos.exchange_pb2 import MarketUpdate
 
 current_position = {"K": 0, "M": 0, "N": 0, "Q": 0, "U": 0, "V": 0}
+quantity_to_order = {"K": 0, "M": 0, "N": 0, "Q": 0, "U": 0, "V": 0}
+filled_amounts = {"K": 0, "M": 0, "N": 0, "Q": 0, "U": 0, "V": 0}
+violation_risk = {"K": 0, "M": 0, "N": 0, "Q": 0, "U": 0, "V": 0}
 net_position_error = int(0)
 running_total = 0
 
@@ -70,7 +73,7 @@ def calc_vector_distance(vec):
     running_total = 0
     for i in np.arange(len(vec)):
         running_total += vec[i,0]**2
-    return np.sqrt(running_total)\
+    return np.sqrt(running_total)
 
 """    
 def summarizeFills(assets,filled_quantities):
@@ -100,25 +103,14 @@ class ExampleMarketMaker(BaseExchangeServerClient):
 
         self._orderids = set([])
     
-    def _make_order(self, asset_code, quantity, base_price, spread):
+    def _make_order(self, asset_code, quantity, price_input):
         return Order(asset_code = asset_code, quantity=quantity,
-                     order_type = Order.ORDER_MKT,
-                     #price = base_price-spread/2 if quantity>0 else base_price+spread/2,
+                     order_type = Order.ORDER_LMT,
+                     price = price_input,
                      competitor_identifier = self._comp_id)
-                     
-    def _cancel_order(self, order_id):
-        return CancelOrderRequest(order_id = order_id)
     
     def handle_exchange_update(self, exchange_update_response):
-        global current_position, net_position_error,running_total
-        
-        """# method for cancelling existing orders
-        cancel_resp = self.cancel_order(self._cancel_order(order_id))
-        if type(cancel_resp) != CancelOrderResponse:
-            print(cancel_resp)
-        else:
-            self.orderids.pop(cancel_resp.order_id)
-        """
+        global current_position, quantity_to_order, filled_amounts, violation_risk, net_position_error, running_total
         
         # Get current price data
         current_prices = np.zeros([6,3])
@@ -130,7 +122,7 @@ class ExampleMarketMaker(BaseExchangeServerClient):
         
         # Implement pricing strategy    
         prc_abnormality_arr = prc_deviation_calc(current_prices)
-        weight_vec = 10*alloc_calc(prc_abnormality_arr,net_position_error)
+        weight_vec = 20*alloc_calc(prc_abnormality_arr,net_position_error)
         weight_int = weight_vec.astype(int)
         print("Error Correction:", net_position_error)
         print("Weight Vector:")
@@ -138,32 +130,62 @@ class ExampleMarketMaker(BaseExchangeServerClient):
         
         # Check for filled quantities and update current position
         for i, update in enumerate(exchange_update_response.fills):
-            current_position[update.order.asset_code] += (update.order.quantity - update.order.remaining_quantity)
+            print(update.filled_quantity)
+            filled_amounts[update.order.asset_code] = update.filled_quantity
+            current_position[update.order.asset_code] += update.filled_quantity
+        print("Quantity to Order:")
+        print(quantity_to_order)
+        
+        print("Order IDS:")
+        print(len(self._orderids))
+        
+        # Cancel Existing Orders
+        current_outstanding_orders = self._orderids.copy()
+        for iorder_id in current_outstanding_orders:
+            print(iorder_id)
+            cancel_resp = self.cancel_order(iorder_id)
+            if(cancel_resp.success != True):
+                print("Error Canceling Order",cancel_resp)
+            else:
+                try:
+                    self._orderids.remove(iorder_id)
+                except:
+                    pass
+        
+        print(len(self._orderids))
+        
+        # Calculate the ideal quantity to order
+        for i, asset_code in enumerate(["K", "M", "N", "Q", "U", "V"]):
+            quantity_to_order[asset_code] = weight_int[0,i] - filled_amounts[asset_code]
+            violation_risk[asset_code] = current_position[asset_code] + quantity_to_order[asset_code]
+        
+        
         
         # Ordering Logic
-        for i, asset_code in enumerate(["K", "M", "N", "Q", "U", "V"]):
-            quantity = weight_int[0,i] - current_position[asset_code]
-            quantity = quantity.astype(int)
-            running_total += abs(quantity)
-            print("Quantity to Order:", quantity)
-            base_price = round(current_prices[i,2],2)
-            spread = 4
-            
-            order_resp = 0
-            if(quantity != 0):
-                order_resp = self.place_order(self._make_order(asset_code, quantity, base_price, spread))
-            
-            # implement error checking
-            if type(order_resp) != PlaceOrderResponse:
-                print(order_resp)
-            else:
-                self._orderids.add(order_resp.order_id)
-        
+        if(sum(list(violation_risk.values()))<50):
+            for i, asset_code in enumerate(["K", "M", "N", "Q", "U", "V"]):
+                quantity = quantity_to_order[asset_code]
+                running_total += abs(quantity)
+                print("Quantity to Order:", quantity)            
+                
+                # Make Orders
+                order_resp = 0
+                if(quantity > 0):
+                    order_resp = self.place_order(self._make_order(asset_code, quantity, round(current_prices[i,0],2)))
+                elif(quantity < 0):
+                    order_resp = self.place_order(self._make_order(asset_code, quantity, round(current_prices[i,1],2)))
+                
+                # implement error checking
+                if type(order_resp) != PlaceOrderResponse:
+                    print(order_resp)
+                else:
+                    self._orderids.add(order_resp.order_id)
+                
         # Calculate feedback
         print("Error Correction:")
         print(list(current_position.values()))
         print(sum(list(current_position.values())))
-        net_position_error = sum(list(current_position.values()))/50
+        net_position_error = sum(list(current_position.values()))/20
         
         # Track PnL
         print("PnL:",exchange_update_response.competitor_metadata.pnl)
