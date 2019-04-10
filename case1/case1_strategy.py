@@ -136,9 +136,6 @@ class ExampleMarketMaker(BaseExchangeServerClient):
         print("Quantity to Order:")
         print(quantity_to_order)
         
-        print("Order IDS:")
-        print(len(self._orderids))
-        
         # Cancel Existing Orders
         current_outstanding_orders = self._orderids.copy()
         for iorder_id in current_outstanding_orders:
@@ -152,21 +149,20 @@ class ExampleMarketMaker(BaseExchangeServerClient):
                 except:
                     pass
         
-        print(len(self._orderids))
-        
         # Calculate the ideal quantity to order
         for i, asset_code in enumerate(["K", "M", "N", "Q", "U", "V"]):
             quantity_to_order[asset_code] = weight_int[0,i] - filled_amounts[asset_code]
             violation_risk[asset_code] = current_position[asset_code] + quantity_to_order[asset_code]
         
-        
-        
+        print(violation_risk.values())
+        print(current_position)
+        print(sum(list(violation_risk.values())))
         # Ordering Logic
-        if(sum(list(violation_risk.values()))<50):
+        if(abs(sum(list(violation_risk.values())))<50):
             for i, asset_code in enumerate(["K", "M", "N", "Q", "U", "V"]):
                 quantity = quantity_to_order[asset_code]
                 running_total += abs(quantity)
-                print("Quantity to Order:", quantity)            
+                print("Quantity to Order:", quantity)
                 
                 # Make Orders
                 order_resp = 0
@@ -185,7 +181,7 @@ class ExampleMarketMaker(BaseExchangeServerClient):
         print("Error Correction:")
         print(list(current_position.values()))
         print(sum(list(current_position.values())))
-        net_position_error = sum(list(current_position.values()))/20
+        net_position_error = 0
         
         # Track PnL
         print("PnL:",exchange_update_response.competitor_metadata.pnl)
