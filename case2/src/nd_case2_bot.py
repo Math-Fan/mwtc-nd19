@@ -26,6 +26,16 @@ def _get_spread_scaled(bsp, wmp, ask, bid):
     return (ask - bid, (ask + bid)/2)
 
 
+def _get_spread_logistic(volatility, price, min_spread=0.02):
+    K = price/2 # maximum spread
+    Q = 3
+    shift = 0.03 # init shift to accout for positive sigma, ARBITRARY (can be adjusted)
+    nu = 0.6 # small nu make larger growth rates near larger sigma (and smaller for smaller)
+    r = 0.2 # growth rate
+    return min_spread + (K - min_spread)/(1+Q*math.exp(-r*volatility))**(1/nu)
+
+
+
 def get_qty(*args, method="discrep"):
     ''' arg:
             0: spread
@@ -33,7 +43,7 @@ def get_qty(*args, method="discrep"):
     '''
     if method == "discrep":
         # factors to determine scaling of qty with spread and price discrepency
-        SPREAD_FACTOR = 500
+        SPREAD_FACTOR = 100
         DISCREP_FACTOR = 0
         return args[0]*SPREAD_FACTOR + args[1]*DISCREP_FACTOR
 
@@ -164,7 +174,7 @@ class NDMarketMaker(BaseExchangeServerClient):
     # WIP
     def rebalance_delta_option(self, code):
         this_delta = self._get_delta(code)
-        print(this_delta)
+        # print(this_delta)
         this_qty = self.inventory[code]
         num_underlying = self.inventory[self.underlying_code]
         other_delta = self._get_position_delta() - this_delta*this_qty
@@ -200,6 +210,8 @@ class NDMarketMaker(BaseExchangeServerClient):
             qty = self.inventory[code]
             vega = self._get_vega(code)
             hedge_qty = abs(qty)*(-vegaP)/vega
+            # print(code, qty)
+            if hedge_qty != 0: print("hedge_qty", code, hedge_qty)
             order_resp = self._make_mkt_order(code, hedge_qty) # buy(sell) -vega/vegaT underlying for each option exchanged
             if type(order_resp) != PlaceOrderResponse:
                 pass
@@ -215,17 +227,24 @@ class NDMarketMaker(BaseExchangeServerClient):
                 stoikov
                     - arg0: volatility
                     - arg1: base price
+                logistic
+                    - arg0: vol
+                    - arg1: price
         '''
         if method == "stoikov":
-            return (args[0]*(self.get_time_to_exp()) + math.log(2), args[1])
+            return args[0]*(self.get_time_to_exp()) + math.log(2)
         elif method == "scaled":
             return _get_spread_scaled(args[0],args[1],args[2],args[3])
+        elif method == "logistic":
+            return _get_spread_logistic(args[0], args[1])
 
 
     # gets meaured price, designed so we can easily adjust it
     def get_measured_price(self, *args, method="weighted"):
         if method == "weighted":
             return weighted_price(args[0], args[1], args[2], args[3])
+        if method == "mid":
+            return (args[1]-args[2])/2
 
 
     # Sends orders to exchange
@@ -252,7 +271,9 @@ class NDMarketMaker(BaseExchangeServerClient):
     MIN_SPREAD = 0.02
     def generate_limit_order(self, asset_code, measured_price, volatility, best_ask, best_bid, min_spread=MIN_SPREAD):
         bs_price = bs.black_scholes(asset_code[0].lower(), self.underlying_price, self.asset_codes[asset_code]["strike"], self.get_time_to_exp(), 0, volatility)
-        spread, base_price = self.get_spread(bs_price, measured_price, best_ask, best_bid, method="scaled")
+        # spread, base_price = self.get_spread(bs_price, measured_price, best_ask, best_bid, method="scaled")
+        spread, base_price = (self.get_spread(volatility, measured_price, method="logistic"), measured_price) # can switch to stoikov easily
+        # print(asset_code, spread)
 
         if spread < min_spread: return
 
@@ -279,7 +300,7 @@ class NDMarketMaker(BaseExchangeServerClient):
         vegaP = self._get_position_vega()
         print("delta:", deltaP)
         print("vega:", vegaP)
-        print("num_underlying:", self.inventory[self.underlying_code])
+        # print("num_underlying:", self.inventory[self.underlying_code])
         updates = {}
         for update in exchange_update_response.market_updates:
             updates[update.asset.asset_code] = update
@@ -289,7 +310,7 @@ class NDMarketMaker(BaseExchangeServerClient):
             self.underlying_price = updates.get(self.underlying_code, 0).mid_market_price
         except AttributeError:
             pass
-        print("price:", self.underlying_price)
+        # print("price:", self.underlying_price)
   
         # processes = []
         code_min_spread = self.codes[0]
@@ -315,13 +336,14 @@ class NDMarketMaker(BaseExchangeServerClient):
         if exchange_update_response.fills:
             for fill in exchange_update_response.fills:
                 self.inventory[fill.order.asset_code] += fill.filled_quantity
+                print(fill.order.order_type)
                 # self.hedge_delta(fill)
-                # self.hedge_vega(fill)
+                self.hedge_vega(fill)
                 # deltaP = self._get_position_delta() 
                 # vegaP = self._get_position_vega()
                 self.rebalance_delta()
                     # self.rebalance_delta_option(code_min_spread)
-                self.rebalance_vega(vegaP)
+                # self.rebalance_vega(vegaP)
 
         #   TODO: multiprocessing
         #        p = mp.Process(target=self.generate_limit_order, args=(code, measured_price, self.asset_codes[code]["vol"], update.ask, update.bid, 0.02))
