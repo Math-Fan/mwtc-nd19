@@ -112,21 +112,15 @@ class ExampleMarketMaker(BaseExchangeServerClient):
         current_prices = np.zeros([6,3])
         for i,update in enumerate(exchange_update_response.market_updates):
             current_prices[i,:] = np.array([update.bids[0].price, update.asks[0].price, update.mid_market_price])
-        print("Current Prices:")
-        print(current_prices)
-        
         
         # Implement pricing strategy 
         running_averages = calc_running_averages(current_prices,running_averages,iteration)
         prc_abnormality_arr = prc_deviation_calc(current_prices,running_averages)
         weight_vec = 50*alloc_calc(prc_abnormality_arr,net_position_error)
         weight_int = weight_vec.astype(int)
-        print("Weight Vector:")
-        print(weight_int)
-        
+
         # Check for filled quantities and update current position
         for i, update in enumerate(exchange_update_response.fills):
-            print(update.filled_quantity*order_id_tracking[update.order.order_id])
             filled_amounts[update.order.asset_code] = update.filled_quantity*order_id_tracking[update.order.order_id]
             current_position[update.order.asset_code] += update.filled_quantity*order_id_tracking[update.order.order_id]
         
@@ -144,13 +138,6 @@ class ExampleMarketMaker(BaseExchangeServerClient):
             quantity_to_order[asset_code] = int((weight_int[0,i] - current_position[asset_code] - current_position_avg))
             violation_risk[asset_code] = current_position[asset_code] + quantity_to_order[asset_code]
         
-        print("Quantity to Order:")
-        print(quantity_to_order.values())
-        print("Violation Risk:")
-        print(violation_risk.values())
-        print(sum(list(violation_risk.values())))
-        print("Current Position:")
-        print(current_position)
         # Ordering Logic
         if(abs(sum(list(violation_risk.values())))<50):
             for i, asset_code in enumerate(["K", "M", "N", "Q", "U", "V"]):
@@ -177,16 +164,11 @@ class ExampleMarketMaker(BaseExchangeServerClient):
                     self._orderids.add(order_resp.order_id)
                 
         # Calculate feedback
-        print("Error Correction:")
-        print(list(current_position.values()))
-        print(sum(list(current_position.values())))
         net_position_error = 0
         while(iteration<20): iteration += 1
         
         # Track PnL
         print("PnL:",exchange_update_response.competitor_metadata.pnl)
-        print("Running Total:",running_total)
-        print("\n\n")
 
 
            
