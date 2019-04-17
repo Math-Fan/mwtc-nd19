@@ -1,9 +1,0 @@
-grpcio
-googleapis-common-protos
-requests
-pytest
-websocket-server
-numpy
-pandas
-ulid-py
-sortedcontainers

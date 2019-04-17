@@ -108,7 +108,7 @@ class NDCurveTrader(BaseExchangeServerClient):
                      competitor_identifier = self._comp_id)
     
     def handle_exchange_update(self, exchange_update_response):
-        global current_position, quantity_to_order, filled_amounts, violation_risk, order_id_tracking, net_position_error, running_total, iteration, running_averages
+        global current_position, quantity_to_order, filled_amounts, violation_risk, order_id_tracking, net_position_error, running_total, iteration1, iteration2, iteration3, running_averages1, running_averages2, running_averages3
         
         # Get current price data
         current_prices = np.zeros([6,3])
@@ -116,9 +116,9 @@ class NDCurveTrader(BaseExchangeServerClient):
             current_prices[i,:] = np.array([update.bids[0].price, update.asks[0].price, update.mid_market_price])
         
         # Implement pricing strategy 
-        running_averages1 = calc_running_averages(current_prices,running_averages,iteration1)
-        running_averages2 = calc_running_averages(current_prices,running_averages,iteration2)
-        running_averages3 = calc_running_averages(current_prices,running_averages,iteration3)
+        running_averages1 = calc_running_averages(current_prices,running_averages1,iteration1)
+        running_averages2 = calc_running_averages(current_prices,running_averages2,iteration2)
+        running_averages3 = calc_running_averages(current_prices,running_averages3,iteration3)
         
         prc_abnormality_arr1 = prc_deviation_calc(current_prices,running_averages1)
         prc_abnormality_arr2 = prc_deviation_calc(current_prices,running_averages2)
@@ -154,17 +154,23 @@ class NDCurveTrader(BaseExchangeServerClient):
                 
                 # Make Orders
                 if(quantity > 0):
-                    if(current_prices[i,1] - current_prices[i,0] < 0.25
+                    if(current_prices[i,1] - current_prices[i,0] < 0.25):
                         order_resp = self.place_order(self._make_MKT_order(asset_code, quantity))
                     else:
                         order_resp = self.place_order(self._make_order(asset_code, quantity, round(current_prices[i,0],2))) # limit order
-                    order_id_tracking[order_resp.order_id] = 1
+                    if type(order_resp) != PlaceOrderResponse:
+                        pass
+                    else:
+                        order_id_tracking[order_resp.order_id] = 1
                 elif(quantity < 0):
-                    if(current_prices[i,1] - current_prices[i,0] < 0.15
+                    if(current_prices[i,1] - current_prices[i,0] < 0.25):
                         order_resp = self.place_order(self._make_MKT_order(asset_code, quantity))
                     else:
                         order_resp = self.place_order(self._make_order(asset_code, quantity, round(current_prices[i,1],2))) # limit order
-                    order_id_tracking[order_resp.order_id] = -1
+                    if type(order_resp) != PlaceOrderResponse:
+                        pass
+                    else:
+                        order_id_tracking[order_resp.order_id] = -1
                 else:
                     order_resp = "Zero Quantity Order"
                 

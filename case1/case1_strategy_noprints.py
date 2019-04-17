@@ -42,7 +42,6 @@ def prc_deviation_calc(prc_vec, expected_prc_vec = np.array([100.4478, 100.9738,
         
 
 def alloc_calc(prc_abnormality_arr,net_position_error):
-    print("EXECUTING ALLOC_CALC")
     # Serialize price abnormalities into column vector (first extract upper triangle of data)
     prc_abnormality_arr = np.triu(prc_abnormality_arr)
     prc_abnormality_col = np.concatenate(prc_abnormality_arr)
@@ -116,7 +115,7 @@ class ExampleMarketMaker(BaseExchangeServerClient):
         # Implement pricing strategy 
         running_averages = calc_running_averages(current_prices,running_averages,iteration)
         prc_abnormality_arr = prc_deviation_calc(current_prices,running_averages)
-        weight_vec = 50*alloc_calc(prc_abnormality_arr,net_position_error)
+        weight_vec = 20*alloc_calc(prc_abnormality_arr,net_position_error)
         weight_int = weight_vec.astype(int)
 
         # Check for filled quantities and update current position
@@ -125,12 +124,12 @@ class ExampleMarketMaker(BaseExchangeServerClient):
             current_position[update.order.asset_code] += update.filled_quantity*order_id_tracking[update.order.order_id]
         
         # Cancel Existing Orders
-        current_outstanding_orders = self._orderids.copy()
-        for iorder_id in current_outstanding_orders:
-            cancel_resp = self.cancel_order(iorder_id)
-            if(cancel_resp.success != True):
-                print("Error Canceling Order",iorder_id)
-            self._orderids.remove(iorder_id)
+    #    current_outstanding_orders = self._orderids.copy()
+    #    for iorder_id in current_outstanding_orders:
+    #        cancel_resp = self.cancel_order(iorder_id)
+    #        if(cancel_resp.success != True):
+    #            print("Error Canceling Order",iorder_id)
+    #        self._orderids.remove(iorder_id)
         
         # Calculate the ideal quantity to order
         current_position_avg = sum(current_position.values()) / len(current_position.values())
@@ -139,7 +138,7 @@ class ExampleMarketMaker(BaseExchangeServerClient):
             violation_risk[asset_code] = current_position[asset_code] + quantity_to_order[asset_code]
         
         # Ordering Logic
-        if(abs(sum(list(violation_risk.values())))<50):
+        if(abs(sum(list(violation_risk.values())))<40):
             for i, asset_code in enumerate(["K", "M", "N", "Q", "U", "V"]):
                 quantity = quantity_to_order[asset_code]
                 running_total += abs(quantity)
@@ -149,11 +148,17 @@ class ExampleMarketMaker(BaseExchangeServerClient):
                 if(quantity > 0):
                     #order_resp = self.place_order(self._make_order(asset_code, quantity, round(current_prices[i,0],2))) # limit order
                     order_resp = self.place_order(self._make_MKT_order(asset_code, quantity))
-                    order_id_tracking[order_resp.order_id] = 1
+                    if type(order_resp) != PlaceOrderResponse:
+                        pass
+                    else:
+                        order_id_tracking[order_resp.order_id] = -1
                 elif(quantity < 0):
                     #order_resp = self.place_order(self._make_order(asset_code, quantity, round(current_prices[i,1],2))) # limit order
                     order_resp = self.place_order(self._make_MKT_order(asset_code, quantity))
-                    order_id_tracking[order_resp.order_id] = -1
+                    if type(order_resp) != PlaceOrderResponse:
+                        pass
+                    else:
+                        order_id_tracking[order_resp.order_id] = -1
                 else:
                     order_resp = "Zero Quantity Order"
                 

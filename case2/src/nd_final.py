@@ -259,8 +259,10 @@ class NDMarketMaker(BaseExchangeServerClient):
         base_price = measured_price
         curr_best_spread = best_ask - best_bid
         spread = _get_spread_logistic(self.asset_codes[asset_code]["vol"], curr_best_spread)
+        # spread = curr_best_spread + 0.02
 
         if spread < min_spread: return
+        # print(spread - curr_best_spread)
 
         qty = min(get_qty(spread, abs(base_price - bs_price)), 5) + 1
 
